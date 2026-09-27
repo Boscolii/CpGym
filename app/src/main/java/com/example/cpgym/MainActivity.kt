@@ -1,5 +1,6 @@
 package com.example.cpgym
 
+import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Bundle
@@ -32,6 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,6 +41,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -68,6 +71,39 @@ data class Treino(
     val titulo: String,
     val foto: Bitmap
 )
+
+
+// ================================
+// ARMAZENAMENTO LOCAL (AULA 08)
+// Camada de Dados & Nativo: só esta
+// classe conhece o SharedPreferences.
+// ================================
+
+class TreinoStore(context: Context) {
+
+    // abre (ou cria) a gaveta "GymRatsPrefs",
+    // visível só para este app
+    private val prefs =
+        context.getSharedPreferences(
+            "GymRatsPrefs",
+            Context.MODE_PRIVATE
+        )
+
+    // lê o total de treinos já registrados;
+    // se nunca foi gravado, devolve 0 (plano B,
+    // nunca crash)
+    fun lerTotalTreinos(): Int =
+        prefs.getInt("total_treinos", 0)
+
+    // edit() abre a transação, putInt grava o
+    // valor, apply() persiste em background
+    // sem travar a tela
+    fun salvarTotalTreinos(v: Int) {
+        prefs.edit()
+            .putInt("total_treinos", v)
+            .apply()
+    }
+}
 
 
 // ================================
@@ -157,6 +193,18 @@ fun GymRatsScreen(
 ) {
 
     // =================================
+    // ARMAZENAMENTO LOCAL (AULA 08)
+    // o store é criado uma vez, junto com a tela
+    // =================================
+
+    val context = LocalContext.current
+
+    val treinoStore = remember {
+        TreinoStore(context)
+    }
+
+
+    // =================================
     // ESTADO DO TÍTULO
     // =================================
 
@@ -173,6 +221,20 @@ fun GymRatsScreen(
     val treinos = remember {
 
         mutableStateListOf<Treino>()
+    }
+
+
+    // =================================
+    // TOTAL DE TREINOS (PERSISTIDO)
+    // rememberSaveable segura a rotação;
+    // o valor inicial vem do disco (ou 0,
+    // se nunca foi gravado) — é o que
+    // segura o fechamento do app.
+    // =================================
+
+    var totalTreinos by rememberSaveable {
+
+        mutableStateOf(treinoStore.lerTotalTreinos())
     }
 
 
@@ -221,7 +283,30 @@ fun GymRatsScreen(
 
 
         Spacer(
-            modifier = Modifier.height(32.dp)
+            modifier = Modifier.height(6.dp)
+        )
+
+
+        // ================================
+        // TOTAL PERSISTIDO (SharedPreferences)
+        // sobrevive à rotação e ao fechamento
+        // do app
+        // ================================
+
+        Text(
+
+            text = "Total de treinos registrados: $totalTreinos",
+
+            fontSize = 13.sp,
+
+            fontWeight = FontWeight.Medium,
+
+            color = VermelhoGym
+        )
+
+
+        Spacer(
+            modifier = Modifier.height(26.dp)
         )
 
 
@@ -449,6 +534,18 @@ fun GymRatsScreen(
                     // limpar a foto atual
 
                     onClearCamera()
+
+
+                    // Novo total na memória
+                    // e no disco, na mesma ação
+                    // (mesmo padrão do Contador
+                    // da Aula 08)
+
+                    totalTreinos = totalTreinos + 1
+
+                    treinoStore.salvarTotalTreinos(
+                        totalTreinos
+                    )
                 }
             },
 
