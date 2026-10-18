@@ -1,10 +1,9 @@
 package com.example.cpgym
 
 import android.content.Context
-import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Bundle
-import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -14,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,15 +24,20 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -44,697 +49,129 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.cpgym.data.UserPreferences
+import com.example.cpgym.data.WorkoutDatabase
+import com.example.cpgym.data.WorkoutEntity
 import com.example.cpgym.ui.theme.CpGymTheme
+import java.io.ByteArrayOutputStream
+import java.text.DateFormat
+import java.util.Date
+import kotlinx.coroutines.launch
 
+private val RedGym = Color(0xFFD32F2F)
+private val DarkGym = Color(0xFF212121)
+private val ScreenGray = Color(0xFFF6F6F6)
 
-// ================================
-// CORES DO APLICATIVO
-// ================================
-
-val VermelhoGym = Color(0xFFD32F2F)
-val VermelhoEscuro = Color(0xFFB71C1C)
-
-val CinzaFundo = Color(0xFFF2F2F2)
-val CinzaCard = Color(0xFFE0E0E0)
-val CinzaTexto = Color(0xFF424242)
-val CinzaEscuro = Color(0xFF212121)
-
-
-// ================================
-// MODELO DE TREINO
-// ================================
-
-data class Treino(
-    val titulo: String,
-    val foto: Bitmap
-)
-
-
-// ================================
-// ARMAZENAMENTO LOCAL (AULA 08)
-// Camada de Dados & Nativo: só esta
-// classe conhece o SharedPreferences.
-// ================================
-
-class TreinoStore(context: Context) {
-
-    // abre (ou cria) a gaveta "GymRatsPrefs",
-    // visível só para este app
-    private val prefs =
-        context.getSharedPreferences(
-            "GymRatsPrefs",
-            Context.MODE_PRIVATE
-        )
-
-    // lê o total de treinos já registrados;
-    // se nunca foi gravado, devolve 0 (plano B,
-    // nunca crash)
-    fun lerTotalTreinos(): Int =
-        prefs.getInt("total_treinos", 0)
-
-    // edit() abre a transação, putInt grava o
-    // valor, apply() persiste em background
-    // sem travar a tela
-    fun salvarTotalTreinos(v: Int) {
-        prefs.edit()
-            .putInt("total_treinos", v)
-            .apply()
-    }
+/** SharedPreferences stores this small aggregate independently of the database. */
+class TrainingCounter(context: Context) {
+    private val preferences = context.getSharedPreferences("GymRatsPrefs", Context.MODE_PRIVATE)
+    fun get(): Int = preferences.getInt("total_treinos", 0)
+    fun increment(): Int = get().plus(1).also { preferences.edit().putInt("total_treinos", it).apply() }
 }
-
-
-// ================================
-// MAIN ACTIVITY
-// ================================
 
 class MainActivity : ComponentActivity() {
-
-    // Foto tirada pela câmera
-    private var cameraBitmap by mutableStateOf<Bitmap?>(null)
-
-
-    // Launcher responsável por abrir a câmera
-    private val cameraLauncher =
-        registerForActivityResult(
-            ActivityResultContracts.StartActivityForResult()
-        ) { result ->
-
-            if (result.resultCode == RESULT_OK) {
-
-                val bitmap =
-                    result.data?.extras?.get("data") as? Bitmap
-
-                cameraBitmap = bitmap
-            }
-        }
-
+    private var photo by mutableStateOf<Bitmap?>(null)
+    private val cameraLauncher = registerForActivityResult(ActivityResultContracts.TakePicturePreview()) { photo = it }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-
         super.onCreate(savedInstanceState)
-
         enableEdgeToEdge()
-
-        setContent {
-
-            CpGymTheme {
-
-                Scaffold(
-                    modifier = Modifier.fillMaxSize(),
-                    containerColor = CinzaFundo
-                ) { innerPadding ->
-
-                    GymRatsScreen(
-
-                        modifier = Modifier.padding(innerPadding),
-
-                        cameraBitmap = cameraBitmap,
-
-                        // Abre a câmera
-                        onOpenCamera = {
-
-                            val intent = Intent(
-                                MediaStore.ACTION_IMAGE_CAPTURE
-                            )
-
-                            cameraLauncher.launch(intent)
-                        },
-
-                        // Limpa a foto atual
-                        onClearCamera = {
-
-                            cameraBitmap = null
-                        }
-                    )
-                }
-            }
-        }
+        setContent { CpGymTheme { GymRatsScreen(photo, { cameraLauncher.launch(null) }, { photo = null }) } }
     }
 }
 
-
-// ================================
-// TELA PRINCIPAL
-// ================================
-
 @Composable
-fun GymRatsScreen(
-
-    modifier: Modifier = Modifier,
-
-    cameraBitmap: Bitmap?,
-
-    onOpenCamera: () -> Unit,
-
-    onClearCamera: () -> Unit
-) {
-
-    // =================================
-    // ARMAZENAMENTO LOCAL (AULA 08)
-    // o store é criado uma vez, junto com a tela
-    // =================================
-
+private fun GymRatsScreen(photo: Bitmap?, onTakePhoto: () -> Unit, onClearPhoto: () -> Unit) {
     val context = LocalContext.current
+    val database = remember { WorkoutDatabase.get(context) }
+    val workouts by database.workoutDao().observeAll().collectAsState(initial = emptyList())
+    val counter = remember { TrainingCounter(context) }
+    val preferences = remember { UserPreferences(context) }
+    val savedName by preferences.userName.collectAsState(initial = "")
+    val scope = rememberCoroutineScope()
+    var name by rememberSaveable { mutableStateOf("") }
+    var title by rememberSaveable { mutableStateOf("") }
+    var total by rememberSaveable { mutableStateOf(counter.get()) }
+    var error by rememberSaveable { mutableStateOf("") }
 
-    val treinoStore = remember {
-        TreinoStore(context)
-    }
+    LaunchedEffect(savedName) { if (name.isBlank()) name = savedName }
 
-
-    // =================================
-    // ESTADO DO TÍTULO
-    // =================================
-
-    var tituloTreino by remember {
-
-        mutableStateOf("")
-    }
-
-
-    // =================================
-    // LISTA DE TREINOS
-    // =================================
-
-    val treinos = remember {
-
-        mutableStateListOf<Treino>()
-    }
-
-
-    // =================================
-    // TOTAL DE TREINOS (PERSISTIDO)
-    // rememberSaveable segura a rotação;
-    // o valor inicial vem do disco (ou 0,
-    // se nunca foi gravado) — é o que
-    // segura o fechamento do app.
-    // =================================
-
-    var totalTreinos by rememberSaveable {
-
-        mutableStateOf(treinoStore.lerTotalTreinos())
-    }
-
-
-    Column(
-
-        modifier = modifier
-            .fillMaxSize()
-            .padding(
-                horizontal = 24.dp,
-                vertical = 32.dp
-            ),
-
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-
-
-        // ================================
-        // CABEÇALHO
-        // ================================
-
-        Text(
-
-            text = "GYMRATS",
-
-            fontSize = 30.sp,
-
-            fontWeight = FontWeight.Bold,
-
-            color = VermelhoGym
-        )
-
-
-        Spacer(
-            modifier = Modifier.height(6.dp)
-        )
-
-
-        Text(
-
-            text = "Registre seu treino",
-
-            fontSize = 15.sp,
-
-            color = CinzaTexto
-        )
-
-
-        Spacer(
-            modifier = Modifier.height(6.dp)
-        )
-
-
-        // ================================
-        // TOTAL PERSISTIDO (SharedPreferences)
-        // sobrevive à rotação e ao fechamento
-        // do app
-        // ================================
-
-        Text(
-
-            text = "Total de treinos registrados: $totalTreinos",
-
-            fontSize = 13.sp,
-
-            fontWeight = FontWeight.Medium,
-
-            color = VermelhoGym
-        )
-
-
-        Spacer(
-            modifier = Modifier.height(26.dp)
-        )
-
-
-        // ================================
-        // ÁREA DA FOTO
-        // ================================
-
-        Box(
-
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(220.dp)
-                .clip(
-                    RoundedCornerShape(16.dp)
-                )
-                .background(CinzaCard),
-
-            contentAlignment = Alignment.Center
+    Scaffold(containerColor = ScreenGray) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            contentPadding = PaddingValues(vertical = 28.dp)
         ) {
-
-            if (cameraBitmap != null) {
-
-                Image(
-
-                    bitmap = cameraBitmap.asImageBitmap(),
-
-                    contentDescription = "Foto do treino",
-
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clip(
-                            RoundedCornerShape(16.dp)
-                        ),
-
-                    contentScale = ContentScale.Crop
-                )
-
-            } else {
-
-                Column(
-
-                    horizontalAlignment =
-                        Alignment.CenterHorizontally
-                ) {
-
-                    Text(
-
-                        text = "📷",
-
-                        fontSize = 42.sp
-                    )
-
-
-                    Spacer(
-                        modifier = Modifier.height(8.dp)
-                    )
-
-
-                    Text(
-
-                        text =
-                            "Nenhuma foto registrada",
-
-                        fontSize = 16.sp,
-
-                        fontWeight =
-                            FontWeight.Medium,
-
-                        color = CinzaTexto,
-
-                        textAlign =
-                            TextAlign.Center
-                    )
+            item {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("GYMRATS", color = RedGym, fontWeight = FontWeight.Bold, fontSize = 30.sp)
+                    Text("Seu diário de treinos", color = Color.DarkGray)
+                    Spacer(Modifier.height(12.dp))
+                    Text("Total registrado: $total", color = RedGym, fontWeight = FontWeight.SemiBold)
                 }
             }
-        }
-
-
-        Spacer(
-            modifier = Modifier.height(20.dp)
-        )
-
-
-        // ================================
-        // BOTÃO DA CÂMERA
-        // ================================
-
-        Button(
-
-            onClick = onOpenCamera,
-
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp),
-
-            shape =
-                RoundedCornerShape(12.dp),
-
-            colors =
-                ButtonDefaults.buttonColors(
-
-                    containerColor =
-                        VermelhoGym,
-
-                    contentColor =
-                        Color.White
-                )
-        ) {
-
-            Text(
-
-                text = "Tirar foto",
-
-                fontSize = 16.sp,
-
-                fontWeight =
-                    FontWeight.Bold
-            )
-        }
-
-
-        Spacer(
-            modifier = Modifier.height(20.dp)
-        )
-
-
-        // ================================
-        // TÍTULO DO TREINO
-        // ================================
-
-        OutlinedTextField(
-
-            value = tituloTreino,
-
-            onValueChange = {
-
-                tituloTreino = it
-            },
-
-            modifier =
-                Modifier.fillMaxWidth(),
-
-            label = {
-
-                Text(
-                    text = "Título do treino"
-                )
-            },
-
-            placeholder = {
-
-                Text(
-                    text =
-                        "Ex.: Peito e Tríceps"
-                )
-            },
-
-            singleLine = true,
-
-            shape =
-                RoundedCornerShape(12.dp),
-
-            colors =
-                OutlinedTextFieldDefaults.colors(
-
-                    focusedBorderColor =
-                        VermelhoGym,
-
-                    focusedLabelColor =
-                        VermelhoGym,
-
-                    cursorColor =
-                        VermelhoGym,
-
-                    unfocusedBorderColor =
-                        Color.Gray
-                )
-        )
-
-
-        Spacer(
-            modifier = Modifier.height(16.dp)
-        )
-
-
-        // ================================
-        // BOTÃO REGISTRAR
-        // ================================
-
-        Button(
-
-            onClick = {
-
-                // Só registra se tiver
-                // foto e título
-
-                if (
-                    cameraBitmap != null &&
-                    tituloTreino.isNotBlank()
-                ) {
-
-                    // Adiciona o treino
-                    // na lista
-
-                    treinos.add(
-
-                        Treino(
-
-                            titulo =
-                                tituloTreino,
-
-                            foto =
-                                cameraBitmap
-                        )
-                    )
-
-
-                    // Limpa o campo
-                    // para o próximo treino
-
-                    tituloTreino = ""
-
-
-                    // Pede para a Activity
-                    // limpar a foto atual
-
-                    onClearCamera()
-
-
-                    // Novo total na memória
-                    // e no disco, na mesma ação
-                    // (mesmo padrão do Contador
-                    // da Aula 08)
-
-                    totalTreinos = totalTreinos + 1
-
-                    treinoStore.salvarTotalTreinos(
-                        totalTreinos
-                    )
-                }
-            },
-
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp),
-
-            shape =
-                RoundedCornerShape(12.dp),
-
-            colors =
-                ButtonDefaults.buttonColors(
-
-                    containerColor =
-                        CinzaEscuro,
-
-                    contentColor =
-                        Color.White
-                )
-        ) {
-
-            Text(
-
-                text = "Registrar treino",
-
-                fontSize = 16.sp,
-
-                fontWeight =
-                    FontWeight.Bold
-            )
-        }
-
-
-        Spacer(
-            modifier = Modifier.height(28.dp)
-        )
-
-
-        // ================================
-        // LISTA DE TREINOS
-        // ================================
-
-        if (treinos.isNotEmpty()) {
-
-            Text(
-
-                text = "MEUS TREINOS",
-
-                fontSize = 14.sp,
-
-                fontWeight =
-                    FontWeight.Bold,
-
-                color =
-                    VermelhoGym
-            )
-
-
-            Spacer(
-                modifier = Modifier.height(12.dp)
-            )
-
-
-            // Lista que permite
-            // vários treinos
-
-            LazyColumn(
-
-                modifier =
-                    Modifier.fillMaxWidth(),
-
-                verticalArrangement =
-                    Arrangement.spacedBy(12.dp)
-            ) {
-
-                items(treinos) { treino ->
-
-                    TreinoCard(
-                        treino = treino
-                    )
-                }
+            item {
+                OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("Nome do aluno (DataStore)") }, singleLine = true, colors = fieldColors())
+            }
+            item {
+                Button({ scope.launch { preferences.saveUserName(name) } }, Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = DarkGym)) { Text("Salvar perfil") }
+            }
+            item { Text(if (savedName.isBlank()) "Olá! Identifique-se para personalizar o app." else "Olá, $savedName!", fontWeight = FontWeight.Medium) }
+            item { PhotoArea(photo) }
+            item {
+                Button(onTakePhoto, Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = RedGym)) { Text("Tirar foto do treino") }
+            }
+            item {
+                OutlinedTextField(title, { title = it; error = "" }, Modifier.fillMaxWidth(), label = { Text("Título do treino") }, placeholder = { Text("Ex.: Peito e tríceps") }, singleLine = true, colors = fieldColors())
+            }
+            if (error.isNotBlank()) item { Text(error, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center) }
+            item {
+                Button(
+                    onClick = {
+                        val image = photo
+                        if (title.isBlank() || image == null) error = "Informe o título e tire uma foto antes de registrar."
+                        else scope.launch {
+                            database.workoutDao().insert(WorkoutEntity(title = title.trim(), createdAt = System.currentTimeMillis(), photo = image.toBytes()))
+                            total = counter.increment()
+                            title = ""
+                            onClearPhoto()
+                        }
+                    }, modifier = Modifier.fillMaxWidth().height(52.dp), colors = ButtonDefaults.buttonColors(containerColor = DarkGym)
+                ) { Text("Registrar treino", fontWeight = FontWeight.Bold) }
+            }
+            if (workouts.isNotEmpty()) {
+                item { Text("MEUS TREINOS (Room / SQLite)", color = RedGym, fontWeight = FontWeight.Bold) }
+                items(workouts, key = { it.id }) { WorkoutCard(it) }
             }
         }
     }
 }
 
-
-// ================================
-// CARD DO TREINO
-// ================================
-
-@Composable
-fun TreinoCard(
-
-    treino: Treino
-) {
-
-    Column(
-
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(
-                RoundedCornerShape(16.dp)
-            )
-            .background(Color.White)
-            .padding(16.dp)
-    ) {
-
-
-        // FOTO
-
-        Image(
-
-            bitmap =
-                treino.foto.asImageBitmap(),
-
-            contentDescription =
-                "Foto do treino",
-
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(160.dp)
-                .clip(
-                    RoundedCornerShape(12.dp)
-                ),
-
-            contentScale =
-                ContentScale.Crop
-        )
-
-
-        Spacer(
-            modifier = Modifier.height(12.dp)
-        )
-
-
-        // TÍTULO
-
-        Text(
-
-            text = treino.titulo,
-
-            fontSize = 20.sp,
-
-            fontWeight =
-                FontWeight.Bold,
-
-            color =
-                CinzaEscuro
-        )
-
-
-        Spacer(
-            modifier = Modifier.height(4.dp)
-        )
-
-
-        // DESCRIÇÃO
-
-        Text(
-
-            text = "Treino registrado",
-
-            fontSize = 14.sp,
-
-            color =
-                CinzaTexto
-        )
+@Composable private fun PhotoArea(photo: Bitmap?) {
+    Box(Modifier.fillMaxWidth().height(210.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFFE0E0E0)), contentAlignment = Alignment.Center) {
+        if (photo != null) Image(photo.asImageBitmap(), "Foto atual do treino", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        else Text("📷\nNenhuma foto registrada", textAlign = TextAlign.Center, fontSize = 16.sp, color = Color.DarkGray)
     }
 }
 
-
-// ================================
-// PREVIEW
-// ================================
-
-@Preview(showBackground = true)
-@Composable
-fun GymRatsPreview() {
-
-    CpGymTheme {
-
-        GymRatsScreen(
-
-            cameraBitmap = null,
-
-            onOpenCamera = {},
-
-            onClearCamera = {}
-        )
+@Composable private fun WorkoutCard(workout: WorkoutEntity) {
+    val bitmap = remember(workout.id) { BitmapFactory.decodeByteArray(workout.photo, 0, workout.photo.size) }
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+        Column(Modifier.padding(14.dp)) {
+            Image(bitmap.asImageBitmap(), "Foto de ${workout.title}", Modifier.fillMaxWidth().height(160.dp).clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.Crop)
+            Spacer(Modifier.height(8.dp))
+            Text(workout.title, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+            Text(DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(workout.createdAt)), color = Color.DarkGray, fontSize = 13.sp)
+        }
     }
 }
+
+private fun Bitmap.toBytes(): ByteArray = ByteArrayOutputStream().use { stream ->
+    compress(Bitmap.CompressFormat.JPEG, 85, stream)
+    stream.toByteArray()
+}
+
+@Composable private fun fieldColors() = OutlinedTextFieldDefaults.colors(focusedBorderColor = RedGym, focusedLabelColor = RedGym, cursorColor = RedGym)
